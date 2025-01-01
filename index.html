@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Push Notification Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+        .notification-status {
+            margin: 1rem 0;
+            padding: 1rem;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <h1>Push Notification Demo</h1>
+    <button id="subscribe">Subscribe to Notifications</button>
+    <div id="status" class="notification-status"></div>
+
+    <script>
+        // Your VAPID public key
+        const VAPID_PUBLIC_KEY = 'BHD2aSub6GMA8iak6e4ltV9sNUf3QbmwrintNby94t3zfOVY_OEDPsBbZXdMXwkCBVYknHDDTsLWU9vq0C4Gp_s';
+        let swRegistration = null;
+
+        // Check if service workers are supported
+        if ('serviceWorker' in navigator && 'PushManager' in window) {
+            window.addEventListener('load', () => {
+                // Register service worker
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then(registration => {
+                        swRegistration = registration;
+                        console.log('Service Worker registered');
+                        initializeUI();
+                        checkSubscription();
+                    })
+                    .catch(err => {
+                        console.error('Service Worker registration failed:', err);
+                        updateStatus('Service Worker registration failed', 'error');
+                    });
+            });
+        } else {
+            updateStatus('Push notifications not supported', 'error');
+        }
+
+        async function checkSubscription() {
+            const subscription = await swRegistration.pushManager.getSubscription();
+            const subscribeButton = document.getElementById('subscribe');
+            
+            if (subscription) {
+                updateStatus('Already subscribed to notifications', 'success');
+                subscribeButton.textContent = 'Unsubscribe';
+            } else {
+                subscribeButton.textContent = 'Subscribe';
+            }
+            subscribeButton.disabled = false;
+        }
+
+        function initializeUI() {
+            const subscribeButton = document.getElementById('subscribe');
+            subscribeButton.addEventListener('click', async () => {
+                subscribeButton.disabled = true;
+                try {
+                    const subscription = await swRegistration.pushManager.getSubscription();
+                    if (subscription) {
+                        await unsubscribeUser();
+                    } else {
+                        await subscribeUserToPush();
+                    }
+                } catch (err) {
+                    console.error('Error handling subscription:', err);
+                    updateStatus('Error handling subscription', 'error');
+                }
+                checkSubscription();
+            });
+        }
+
+        function updateStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'notification-status ' + type;
+        }
+
+        async function unsubscribeUser() {
+            try {
+                const subscription = await swRegistration.pushManager.getSubscription();
+                if (subscription) {
+                    await subscription.unsubscribe();
+                    // Notify your server about unsubscription
+                    await fetch('https://your-cloudflare-worker.workers.dev/unsubscribe', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(subscription)
+                    });
+                    updateStatus('Successfully unsubscribed from notifications', 'success');
+                }
+            } catch (err) {
+                console.error('Error unsubscribing:', err);
+                updateStatus('Error unsubscribing from notifications', 'error');
+            }
+        }
+
+        async function subscribeUserToPush() {
+            try {
+                const applicationServerKey = urlB64ToUint8Array(VAPID_PUBLIC_KEY);
+                const subscription = await swRegistration.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: applicationServerKey
+                });
+
+                // Send subscription to server
+                await fetch('https://your-cloudflare-worker.workers.dev/subscribe', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(subscription)
+                });
+
+                updateStatus('Successfully subscribed to push notifications!', 'success');
+            } catch (err) {
+                console.error('Failed to subscribe:', err);
+                updateStatus('Failed to subscribe to push notifications', 'error');
+            }
+        }
+
+        // Convert VAPID key to Uint8Array
+        function urlB64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding)
+                .replace(/\-/g, '+')
+                .replace(/_/g, '/');
+
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+
+            for (let i = 0; i < rawData.length; ++i) {
+                outputArray[i] = rawData.charCodeAt(i);
+            }
+            return outputArray;
+        }
+    </script>
+</body>
+</html>
