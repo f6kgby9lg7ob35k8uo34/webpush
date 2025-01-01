@@ -10,6 +10,7 @@
             max-width: 600px;
             margin: 2rem auto;
             padding: 0 1rem;
+            background-color: #f5f5f5;
         }
         .notification-status {
             margin: 1rem 0;
@@ -19,153 +20,196 @@
         .success {
             background-color: #d4edda;
             color: #155724;
+            border: 1px solid #c3e6cb;
         }
         .error {
             background-color: #f8d7da;
             color: #721c24;
+            border: 1px solid #f5c6cb;
         }
         button {
             background-color: #007bff;
             color: white;
             border: none;
-            padding: 0.5rem 1rem;
+            padding: 0.75rem 1.5rem;
             border-radius: 4px;
             cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #0056b3;
         }
         button:disabled {
             background-color: #ccc;
             cursor: not-allowed;
         }
+        .container {
+            background-color: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 1.5rem;
+        }
     </style>
 </head>
 <body>
-    <h1>Push Notification Demo</h1>
-    <button id="subscribe">Subscribe to Notifications</button>
-    <div id="status" class="notification-status"></div>
+    <div class="container">
+        <h1>Push Notification Demo</h1>
+        <button id="subscribe">Subscribe to Notifications</button>
+        <div id="status" class="notification-status"></div>
 
-    <script>
-        // Your VAPID public key
-        const VAPID_PUBLIC_KEY = 'BHD2aSub6GMA8iak6e4ltV9sNUf3QbmwrintNby94t3zfOVY_OEDPsBbZXdMXwkCBVYknHDDTsLWU9vq0C4Gp_s';
-        let swRegistration = null;
+        <script>
+            // Your VAPID public key
+            const VAPID_PUBLIC_KEY = 'BHD2aSub6GMA8iak6e4ltV9sNUf3QbmwrintNby94t3zfOVY_OEDPsBbZXdMXwkCBVYknHDDTsLWU9vq0C4Gp_s';
+            const WORKER_URL = 'https://blue-mode-1e8c.rohand-1.workers.dev';
+            let swRegistration = null;
 
-        // Check if service workers are supported
-        if ('serviceWorker' in navigator && 'PushManager' in window) {
-            window.addEventListener('load', () => {
-                // Register service worker
-                navigator.serviceWorker.register('/service-worker.js')
-                    .then(registration => {
-                        swRegistration = registration;
-                        console.log('Service Worker registered');
-                        initializeUI();
-                        checkSubscription();
-                    })
-                    .catch(err => {
-                        console.error('Service Worker registration failed:', err);
-                        updateStatus('Service Worker registration failed', 'error');
-                    });
-            });
-        } else {
-            updateStatus('Push notifications not supported', 'error');
-        }
-
-        async function checkSubscription() {
-            const subscription = await swRegistration.pushManager.getSubscription();
-            const subscribeButton = document.getElementById('subscribe');
-            
-            if (subscription) {
-                updateStatus('Already subscribed to notifications', 'success');
-                subscribeButton.textContent = 'Unsubscribe';
+            // Check if service workers are supported
+            if ('serviceWorker' in navigator && 'PushManager' in window) {
+                window.addEventListener('load', () => {
+                    // Register service worker
+                    navigator.serviceWorker.register('/service-worker.js')
+                        .then(registration => {
+                            swRegistration = registration;
+                            console.log('Service Worker registered');
+                            initializeUI();
+                            checkSubscription();
+                        })
+                        .catch(err => {
+                            console.error('Service Worker registration failed:', err);
+                            updateStatus('Service Worker registration failed', 'error');
+                        });
+                });
             } else {
-                subscribeButton.textContent = 'Subscribe';
+                updateStatus('Push notifications not supported', 'error');
             }
-            subscribeButton.disabled = false;
-        }
 
-        function initializeUI() {
-            const subscribeButton = document.getElementById('subscribe');
-            subscribeButton.addEventListener('click', async () => {
-                subscribeButton.disabled = true;
+            async function checkSubscription() {
+                const subscription = await swRegistration.pushManager.getSubscription();
+                const subscribeButton = document.getElementById('subscribe');
+                
+                if (subscription) {
+                    updateStatus('Already subscribed to notifications', 'success');
+                    subscribeButton.textContent = 'Unsubscribe';
+                } else {
+                    subscribeButton.textContent = 'Subscribe';
+                }
+                subscribeButton.disabled = false;
+            }
+
+            function initializeUI() {
+                const subscribeButton = document.getElementById('subscribe');
+                subscribeButton.addEventListener('click', async () => {
+                    subscribeButton.disabled = true;
+                    try {
+                        const subscription = await swRegistration.pushManager.getSubscription();
+                        if (subscription) {
+                            await unsubscribeUser();
+                        } else {
+                            await subscribeUserToPush();
+                        }
+                    } catch (err) {
+                        console.error('Error handling subscription:', err);
+                        updateStatus('Error handling subscription', 'error');
+                    }
+                    checkSubscription();
+                });
+            }
+
+            function updateStatus(message, type) {
+                const status = document.getElementById('status');
+                status.textContent = message;
+                status.className = 'notification-status ' + type;
+            }
+
+            async function unsubscribeUser() {
                 try {
                     const subscription = await swRegistration.pushManager.getSubscription();
                     if (subscription) {
-                        await unsubscribeUser();
-                    } else {
-                        await subscribeUserToPush();
+                        await subscription.unsubscribe();
+                        // Notify your server about unsubscription
+                        await fetch(`${WORKER_URL}/unsubscribe`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(subscription)
+                        });
+                        updateStatus('Successfully unsubscribed from notifications', 'success');
                     }
                 } catch (err) {
-                    console.error('Error handling subscription:', err);
-                    updateStatus('Error handling subscription', 'error');
+                    console.error('Error unsubscribing:', err);
+                    updateStatus('Error unsubscribing from notifications', 'error');
                 }
-                checkSubscription();
-            });
-        }
+            }
 
-        function updateStatus(message, type) {
-            const status = document.getElementById('status');
-            status.textContent = message;
-            status.className = 'notification-status ' + type;
-        }
+            async function subscribeUserToPush() {
+                try {
+                    const applicationServerKey = urlB64ToUint8Array(VAPID_PUBLIC_KEY);
+                    const subscription = await swRegistration.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: applicationServerKey
+                    });
 
-        async function unsubscribeUser() {
-            try {
-                const subscription = await swRegistration.pushManager.getSubscription();
-                if (subscription) {
-                    await subscription.unsubscribe();
-                    // Notify your server about unsubscription
-                    await fetch('https://your-cloudflare-worker.workers.dev/unsubscribe', {
+                    // Send subscription to server
+                    const response = await fetch(`${WORKER_URL}/subscribe`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                         },
                         body: JSON.stringify(subscription)
                     });
-                    updateStatus('Successfully unsubscribed from notifications', 'success');
+
+                    if (!response.ok) {
+                        throw new Error('Failed to send subscription to server');
+                    }
+
+                    updateStatus('Successfully subscribed to push notifications!', 'success');
+                    
+                    // Send a test notification
+                    await fetch(`${WORKER_URL}/send-notification`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            subscription,
+                            notification: {
+                                title: 'Successfully Subscribed!',
+                                body: 'You will now receive notifications.',
+                                icon: '/icon.png',
+                                data: {
+                                    url: window.location.origin
+                                }
+                            }
+                        })
+                    });
+                } catch (err) {
+                    console.error('Failed to subscribe:', err);
+                    updateStatus('Failed to subscribe to push notifications: ' + err.message, 'error');
                 }
-            } catch (err) {
-                console.error('Error unsubscribing:', err);
-                updateStatus('Error unsubscribing from notifications', 'error');
             }
-        }
 
-        async function subscribeUserToPush() {
-            try {
-                const applicationServerKey = urlB64ToUint8Array(VAPID_PUBLIC_KEY);
-                const subscription = await swRegistration.pushManager.subscribe({
-                    userVisibleOnly: true,
-                    applicationServerKey: applicationServerKey
-                });
+            // Convert VAPID key to Uint8Array
+            function urlB64ToUint8Array(base64String) {
+                const padding = '='.repeat((4 - base64String.length % 4) % 4);
+                const base64 = (base64String + padding)
+                    .replace(/\-/g, '+')
+                    .replace(/_/g, '/');
 
-                // Send subscription to server
-                await fetch('https://your-cloudflare-worker.workers.dev/subscribe', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(subscription)
-                });
+                const rawData = window.atob(base64);
+                const outputArray = new Uint8Array(rawData.length);
 
-                updateStatus('Successfully subscribed to push notifications!', 'success');
-            } catch (err) {
-                console.error('Failed to subscribe:', err);
-                updateStatus('Failed to subscribe to push notifications', 'error');
+                for (let i = 0; i < rawData.length; ++i) {
+                    outputArray[i] = rawData.charCodeAt(i);
+                }
+                return outputArray;
             }
-        }
-
-        // Convert VAPID key to Uint8Array
-        function urlB64ToUint8Array(base64String) {
-            const padding = '='.repeat((4 - base64String.length % 4) % 4);
-            const base64 = (base64String + padding)
-                .replace(/\-/g, '+')
-                .replace(/_/g, '/');
-
-            const rawData = window.atob(base64);
-            const outputArray = new Uint8Array(rawData.length);
-
-            for (let i = 0; i < rawData.length; ++i) {
-                outputArray[i] = rawData.charCodeAt(i);
-            }
-            return outputArray;
-        }
-    </script>
+        </script>
+    </div>
 </body>
 </html>
