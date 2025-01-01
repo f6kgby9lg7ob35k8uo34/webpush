@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Push Notification Demo</title>
+    <title>Push Notification Debugging</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -48,7 +48,7 @@
             background-color: white;
             padding: 2rem;
             border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
         h1 {
             color: #333;
@@ -58,49 +58,79 @@
 </head>
 <body>
     <div class="container">
-        <h1>Push Notification Demo</h1>
-        <button id="subscribe">Subscribe to Notifications</button>
+        <h1>Push Notification Debugging</h1>
+        <button id="subscribe" disabled>Loading...</button>
         <div id="status" class="notification-status"></div>
 
         <script>
-            // Your VAPID public key
             const VAPID_PUBLIC_KEY = 'BHD2aSub6GMA8iak6e4ltV9sNUf3QbmwrintNby94t3zfOVY_OEDPsBbZXdMXwkCBVYknHDDTsLWU9vq0C4Gp_s';
-            const WORKER_URL = 'https://blue-mode-1e8c.rohand-1.workers.dev';
+            const BACKEND_URL = 'https://blue-mode-1e8c.rohand-1.workers.dev';
             let swRegistration = null;
 
-            // Check if service workers are supported
+            // Utility: Update the status message on the page
+            function updateStatus(message, type) {
+                const status = document.getElementById('status');
+                status.textContent = message;
+                status.className = `notification-status ${type}`;
+            }
+
+            // Utility: Convert VAPID key to Uint8Array
+            function urlB64ToUint8Array(base64String) {
+                const padding = '='.repeat((4 - base64String.length % 4) % 4);
+                const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+                const rawData = window.atob(base64);
+                const outputArray = new Uint8Array(rawData.length);
+                for (let i = 0; i < rawData.length; ++i) {
+                    outputArray[i] = rawData.charCodeAt(i);
+                }
+                return outputArray;
+            }
+
+            // Register Service Worker and Initialize UI
             if ('serviceWorker' in navigator && 'PushManager' in window) {
                 window.addEventListener('load', () => {
-                    // Register service worker
-                    navigator.serviceWorker.register('https://f6kgby9lg7ob35k8uo34.github.io/webpush/service-worker.js')
+                    navigator.serviceWorker.register('/service-worker.js')
                         .then(registration => {
+                            console.log('Service Worker registered with scope:', registration.scope);
                             swRegistration = registration;
-                            console.log('Service Worker registered');
                             initializeUI();
                             checkSubscription();
                         })
                         .catch(err => {
-                            console.error('Service Worker registration failed:', err);
-                            updateStatus('Service Worker registration failed', 'error');
+                            console.error('Service Worker registration failed:', {
+                                message: err.message,
+                                name: err.name,
+                                stack: err.stack
+                            });
+                            updateStatus('Service Worker registration failed: ' + err.message, 'error');
                         });
                 });
             } else {
-                updateStatus('Push notifications not supported', 'error');
+                console.warn('Service Workers or Push Notifications are not supported in this browser.');
+                updateStatus('Push notifications are not supported in your browser.', 'error');
             }
 
+            // Check Subscription Status
             async function checkSubscription() {
-                const subscription = await swRegistration.pushManager.getSubscription();
-                const subscribeButton = document.getElementById('subscribe');
-                
-                if (subscription) {
-                    updateStatus('Already subscribed to notifications', 'success');
-                    subscribeButton.textContent = 'Unsubscribe';
-                } else {
-                    subscribeButton.textContent = 'Subscribe';
+                try {
+                    const subscription = await swRegistration.pushManager.getSubscription();
+                    const subscribeButton = document.getElementById('subscribe');
+                    if (subscription) {
+                        console.log('User is already subscribed:', subscription);
+                        updateStatus('You are already subscribed to notifications.', 'success');
+                        subscribeButton.textContent = 'Unsubscribe';
+                    } else {
+                        updateStatus('You are not subscribed to notifications.', 'error');
+                        subscribeButton.textContent = 'Subscribe';
+                    }
+                    subscribeButton.disabled = false;
+                } catch (err) {
+                    console.error('Error checking subscription:', err);
+                    updateStatus('Error checking subscription: ' + err.message, 'error');
                 }
-                subscribeButton.disabled = false;
             }
 
+            // Initialize Subscribe/Unsubscribe Button
             function initializeUI() {
                 const subscribeButton = document.getElementById('subscribe');
                 subscribeButton.addEventListener('click', async () => {
@@ -113,40 +143,14 @@
                             await subscribeUserToPush();
                         }
                     } catch (err) {
-                        console.error('Error handling subscription:', err);
-                        updateStatus('Error handling subscription', 'error');
+                        console.error('Error during subscription/unsubscription:', err);
+                        updateStatus('Error during subscription/unsubscription: ' + err.message, 'error');
                     }
                     checkSubscription();
                 });
             }
 
-            function updateStatus(message, type) {
-                const status = document.getElementById('status');
-                status.textContent = message;
-                status.className = 'notification-status ' + type;
-            }
-
-            async function unsubscribeUser() {
-                try {
-                    const subscription = await swRegistration.pushManager.getSubscription();
-                    if (subscription) {
-                        await subscription.unsubscribe();
-                        // Notify your server about unsubscription
-                        await fetch(`${WORKER_URL}/unsubscribe`, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify(subscription)
-                        });
-                        updateStatus('Successfully unsubscribed from notifications', 'success');
-                    }
-                } catch (err) {
-                    console.error('Error unsubscribing:', err);
-                    updateStatus('Error unsubscribing from notifications', 'error');
-                }
-            }
-
+            // Subscribe User to Push Notifications
             async function subscribeUserToPush() {
                 try {
                     const applicationServerKey = urlB64ToUint8Array(VAPID_PUBLIC_KEY);
@@ -154,60 +158,39 @@
                         userVisibleOnly: true,
                         applicationServerKey: applicationServerKey
                     });
-
-                    // Send subscription to server
-                    const response = await fetch(`${WORKER_URL}/subscribe`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(subscription)
-                    });
-
-                    if (!response.ok) {
-                        throw new Error('Failed to send subscription to server');
-                    }
+                    console.log('Push subscription successful:', subscription);
 
                     updateStatus('Successfully subscribed to push notifications!', 'success');
-                    
-                    // Send a test notification
-                    await fetch(`${WORKER_URL}/send-notification`, {
+                    await fetch(`${BACKEND_URL}/subscribe`, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            subscription,
-                            notification: {
-                                title: 'Successfully Subscribed!',
-                                body: 'You will now receive notifications.',
-                                icon: '/icon.png',
-                                data: {
-                                    url: window.location.origin
-                                }
-                            }
-                        })
+                        body: JSON.stringify(subscription),
+                        headers: { 'Content-Type': 'application/json' }
                     });
                 } catch (err) {
-                    console.error('Failed to subscribe:', err);
-                    updateStatus('Failed to subscribe to push notifications: ' + err.message, 'error');
+                    console.error('Failed to subscribe:', err.message, err);
+                    updateStatus('Failed to subscribe: ' + err.message, 'error');
                 }
             }
 
-            // Convert VAPID key to Uint8Array
-            function urlB64ToUint8Array(base64String) {
-                const padding = '='.repeat((4 - base64String.length % 4) % 4);
-                const base64 = (base64String + padding)
-                    .replace(/\-/g, '+')
-                    .replace(/_/g, '/');
+            // Unsubscribe User
+            async function unsubscribeUser() {
+                try {
+                    const subscription = await swRegistration.pushManager.getSubscription();
+                    if (subscription) {
+                        await subscription.unsubscribe();
+                        console.log('User unsubscribed:', subscription);
 
-                const rawData = window.atob(base64);
-                const outputArray = new Uint8Array(rawData.length);
-
-                for (let i = 0; i < rawData.length; ++i) {
-                    outputArray[i] = rawData.charCodeAt(i);
+                        updateStatus('Successfully unsubscribed from notifications.', 'success');
+                        await fetch(`${BACKEND_URL}/unsubscribe`, {
+                            method: 'POST',
+                            body: JSON.stringify(subscription),
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
+                } catch (err) {
+                    console.error('Failed to unsubscribe:', err.message, err);
+                    updateStatus('Failed to unsubscribe: ' + err.message, 'error');
                 }
-                return outputArray;
             }
         </script>
     </div>
